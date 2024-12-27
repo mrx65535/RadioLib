@@ -356,11 +356,20 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
 
     // check if it's the idle code word
     if(cw == RADIOLIB_PAGER_IDLE_CODE_WORD) {
-      continue;
+      Serial.printf(" I %d\n", framePos);
+      if (framePos < 16)
+	continue;
+      return(RADIOLIB_ERR_ADDRESS_NOT_FOUND);
     }
 
-    // check if it's the sync word
+    // check for mangled final idle code word
+    if((cw ^ RADIOLIB_PAGER_IDLE_CODE_WORD) < 4 && framePos >= 16)  {
+      Serial.printf(" i %d\n", framePos);
+      return(RADIOLIB_ERR_ADDRESS_NOT_FOUND);
+    }
+
     if(cw == RADIOLIB_PAGER_FRAME_SYNC_CODE_WORD) {
+      Serial.printf(" S %d\n", framePos);
       framePos = 0;
       continue;
     }
@@ -373,6 +382,7 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
 
     // should be an address code word, extract the address
     uint32_t addr_found = ((cw & RADIOLIB_PAGER_ADDRESS_BITS_MASK) >> (RADIOLIB_PAGER_ADDRESS_POS - 3)) | (framePos/2);
+    Serial.printf(" A %d %d", addr_found, framePos);
     if (addressMatched(addr_found)) {
       match = true;
       if(addr) {
@@ -385,6 +395,7 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
       } else {
         symbolLength = 7;
       }
+      Serial.printf(" %d %d\n", (cw & RADIOLIB_PAGER_FUNCTION_BITS_MASK) >> RADIOLIB_PAGER_FUNC_BITS_POS, symbolLength);
     }
   }
 
@@ -400,16 +411,30 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
   int8_t ovfBits = 0;
   while(phyLayer->available()) {
     uint32_t cw = read();
-
+    framePos++;
+  
     // check if it's the idle code word
     if(cw == RADIOLIB_PAGER_IDLE_CODE_WORD) {
+      Serial.printf(" I %d\n", framePos);
+      if (framePos < 16)
+	      continue;
+      break;
+    }
+
+    // check for mangled final idle code word
+    if((cw ^ RADIOLIB_PAGER_IDLE_CODE_WORD) < 4 && framePos >= 16)  {
+      Serial.printf(" i %d\n", framePos);
       break;
     }
 
     // skip the sync words
     if(cw == RADIOLIB_PAGER_FRAME_SYNC_CODE_WORD) {
+      Serial.printf(" S %d\n", framePos);
+      framePos = 0;
       continue;
     }
+
+    Serial.printf(" M %d ", framePos);
 
     // check overflow from previous code word
     uint8_t bitPos = RADIOLIB_PAGER_CODE_WORD_LEN - 1 - symbolLength;
@@ -435,11 +460,13 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
       if(symbolLength == 4) {
         symbol = decodeBCD(symbol);
       }
+
       data[decodedBytes++] = symbol;
 
       // adjust the bit position of the next message symbol
       bitPos += ovfBits;
       bitPos -= symbolLength;
+      Serial.printf("'%c' %d %d", symbol, bitPos, ovfBits);
     }
 
     // get the message symbols based on the encoding type
@@ -464,9 +491,13 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
         ovfBits = remBits;
       }
       bitPos -= symbolLength;
+      Serial.printf("'%c' %d %d ", symbol, bitPos, ovfBits);
     }
 
+    Serial.printf("\n");
   }
+
+
 
   // save the number of decoded bytes
   *len = decodedBytes;
@@ -476,6 +507,8 @@ int16_t PagerClient::readData(uint8_t* data, size_t* len, uint32_t* addr) {
 
 bool PagerClient::addressMatched(uint32_t addr) {
   // check whether to match single or multiple addresses/masks
+  Serial.printf("[RA:%d #%d fA:%d fM:%0X]", addr, filterNumAddresses, filterAddr, filterMask);
+  
   if(filterNumAddresses == 0) {
     return((addr & filterMask) == (filterAddr & filterMask));
   }
@@ -549,7 +582,8 @@ uint32_t PagerClient::read() {
     codeWord = ~codeWord;
   }
 
-  RADIOLIB_DEBUG_PROTOCOL_PRINTLN("R\t%lX", (long unsigned int)codeWord);
+  //RADIOLIB_DEBUG_PROTOCOL_PRINTLN("R\t%lX", (long unsigned int)codeWord);
+  Serial.printf("R\t%08X", (long unsigned int)codeWord);
   // TODO BCH error correction here
   return(codeWord);
 }
